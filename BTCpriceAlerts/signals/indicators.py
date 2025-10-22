@@ -61,10 +61,26 @@ def add_bollinger_bands(df, length=20, std=2):
     Buy when price touches lower band, Sell when price touches upper band.
     """
     bb = ta.bbands(df['Close'], length=length, std=std)
+    if bb is None or bb.empty:
+        # Ensure expected columns exist so downstream code does not break
+        std_suffix = str(float(std)).rstrip("0").rstrip(".")
+        df[f'BBL_{length}_{std_suffix}'] = np.nan
+        df[f'BBU_{length}_{std_suffix}'] = np.nan
+        df['BB_signal'] = None
+        return df
+
     df = df.join(bb)
 
-    df['BB_signal'] = np.where(df['Close'] <= df[f'BBL_{length}_{std}.0'], 'Buy',
-                        np.where(df['Close'] >= df[f'BBU_{length}_{std}.0'], 'Sell', None))
+    std_suffix = str(float(std)).rstrip("0").rstrip(".")
+    lower_col = next((c for c in bb.columns if c.startswith(f'BBL_{length}_')), None)
+    upper_col = next((c for c in bb.columns if c.startswith(f'BBU_{length}_')), None)
+
+    if not lower_col or not upper_col:
+        df['BB_signal'] = None
+        return df
+
+    df['BB_signal'] = np.where(df['Close'] <= df[lower_col], 'Buy',
+                        np.where(df['Close'] >= df[upper_col], 'Sell', None))
     return df
 
 

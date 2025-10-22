@@ -1,10 +1,9 @@
 import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
@@ -79,14 +78,9 @@ st.markdown('<div class="headline">BTC Macro Indicators</div>', unsafe_allow_htm
 st.caption("Holistic market read with technical overlays and macro crosswinds.")
 
 
-@st.cache_data(ttl=3600)
-def load_sample_data():
-    sample_path = Path(__file__).resolve().parent / "data" / "btc_sample.csv"
-    if sample_path.exists():
-        df = pd.read_csv(sample_path, parse_dates=["Date"]).set_index("Date")
-        return df
-
-    dates = pd.date_range(end=pd.Timestamp.utcnow().normalize(), periods=365)
+def _synthetic_price_history(periods: int = 365) -> pd.DataFrame:
+    """Generate a deterministic synthetic OHLCV series."""
+    dates = pd.date_range(end=pd.Timestamp.utcnow().normalize(), periods=periods)
     base = np.linspace(20000, 30000, len(dates))
     oscillation = 1200 * np.sin(np.linspace(0, 8 * np.pi, len(dates)))
     close = base + oscillation
@@ -110,23 +104,42 @@ def load_sample_data():
 
 
 @st.cache_data(ttl=3600)
-def load_live_data():
-    btc = get_btc_price_data(days=365)
-    cpi = get_fred_macro_series("CPIAUCSL")
-    fed = get_fred_macro_series("FEDFUNDS")
+def load_sample_data():
+    sample_path = Path(__file__).resolve().parent / "data" / "btc_sample.csv"
+    if sample_path.exists():
+        df = pd.read_csv(sample_path, parse_dates=["Date"]).set_index("Date")
+        return df
 
-    df = btc.copy()
-    df = df.join(cpi, how="left")
-    df = df.join(fed, how="left")
-    df.rename(
-        columns={
-            "CPIAUCSL": "CPI",
-            "FEDFUNDS": "FedFundsRate",
-        },
-        inplace=True,
-    )
-    df.fillna(method="ffill", inplace=True)
-    return df
+    return _synthetic_price_history()
+
+
+@st.cache_data(ttl=3600)
+def load_live_data():
+    try:
+        btc = get_btc_price_data(days=365)
+        if btc.empty:
+            raise ValueError("BTC series returned empty frame.")
+
+        cpi = get_fred_macro_series("CPIAUCSL")
+        fed = get_fred_macro_series("FEDFUNDS")
+
+        df = btc.copy()
+        if not cpi.empty:
+            df = df.join(cpi, how="left")
+        if not fed.empty:
+            df = df.join(fed, how="left")
+        df.rename(
+            columns={
+                "CPIAUCSL": "CPI",
+                "FEDFUNDS": "FedFundsRate",
+            },
+            inplace=True,
+        )
+        df.fillna(method="ffill", inplace=True)
+        return df
+    except Exception as exc:  # pragma: no cover - best effort logging
+        print(f"Live data load failed: {exc}")
+        return _synthetic_price_history()
 
 
 st.sidebar.header("Data Feeds")
@@ -139,7 +152,17 @@ use_sma = st.sidebar.checkbox("SMA Crossover")
 use_ema = st.sidebar.checkbox("EMA Crossover")
 use_bb = st.sidebar.checkbox("Bollinger Bands")
 
-df = load_live_data() if use_live else load_sample_data()
+try:
+    df = load_live_data() if use_live else load_sample_data()
+except Exception as exc:
+    st.warning(
+        f"Data load encountered an issue ({exc}). Displaying synthetic sample data instead."
+    )
+    df = load_sample_data()
+
+if df.empty or "Close" not in df.columns:
+    st.warning("Primary price series unavailable. Showing synthetic benchmark data.")
+    df = _synthetic_price_history()
 
 if use_rsi:
     df = add_rsi(df)
@@ -155,9 +178,16 @@ if use_bb:
 # KPI banner
 latest = df.iloc[-1]
 prior = df.iloc[-2] if len(df) > 1 else latest
-close_px = latest["Close"]
-delta_px = close_px - prior["Close"]
-delta_pct = (delta_px / prior["Close"]) * 100 if prior["Close"] else 0
+close_px = latest.get("Close")
+prior_close = prior.get("Close", close_px)
+
+if close_px is None or pd.isna(close_px):
+    close_px = np.nan
+if prior_close in (None, 0) or pd.isna(prior_close):
+    prior_close = close_px
+
+delta_px = close_px - prior_close if pd.notna(close_px) and pd.notna(prior_close) else np.nan
+delta_pct = (delta_px / prior_close * 100) if prior_close not in (0, None) and pd.notna(prior_close) and pd.notna(delta_px) else np.nan
 rsi_value = latest.get("RSI")
 vol = latest.get("Volume", np.nan)
 
@@ -165,12 +195,16 @@ kpi_cols = st.columns(4)
 with kpi_cols[0]:
     st.markdown('<div class="metric-card">', unsafe_allow_html=True)
     st.markdown('<div class="metric-label">Spot BTC</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="metric-value">${close_px:,.0f}</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"<div class='metric-sub' style='color:{'#55F2C8' if delta_px >= 0 else '#FF7A8A'};'>"
-        f"{delta_px:+,.0f} | {delta_pct:+.2f}%</div>",
-        unsafe_allow_html=True,
-    )
+    display_price = f"${close_px:,.0f}" if pd.notna(close_px) else "N/A"
+    st.markdown(f'<div class="metric-value">{display_price}</div>', unsafe_allow_html=True)
+    if pd.notna(delta_px) and pd.notna(delta_pct):
+        st.markdown(
+            f"<div class='metric-sub' style='color:{'#55F2C8' if delta_px >= 0 else '#FF7A8A'};'>"
+            f"{delta_px:+,.0f} | {delta_pct:+.2f}%</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown("<div class='metric-sub'>Δ unavailable</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 with kpi_cols[1]:
@@ -206,6 +240,8 @@ with kpi_cols[3]:
 
 # Build plot
 fig = go.Figure()
+synthetic_len = len(df) if len(df) > 0 else 365
+price_series = df["Close"] if "Close" in df.columns else _synthetic_price_history(synthetic_len)["Close"]
 fig.add_trace(
     go.Scatter(
         x=df.index,
@@ -300,8 +336,10 @@ st.markdown('<div class="block-title">Macro Context</div>', unsafe_allow_html=Tr
 macro_cols = st.columns(2)
 with macro_cols[0]:
     st.subheader("CPI vs Price")
-    if {"CPI"}.issubset(df.columns):
+    if {"Close", "CPI"}.issubset(df.columns):
         st.line_chart(df[["Close", "CPI"]], use_container_width=True)
+    elif "CPI" in df.columns:
+        st.line_chart(df[["CPI"]], use_container_width=True)
     else:
         st.info("CPI data unavailable for this session.")
 
@@ -309,6 +347,8 @@ with macro_cols[1]:
     st.subheader("Fed Funds Rate")
     if {"FedFundsRate"}.issubset(df.columns):
         st.area_chart(df["FedFundsRate"], use_container_width=True)
+    elif "FedFundsRate" in df.columns:
+        st.area_chart(df[["FedFundsRate"]], use_container_width=True)
     else:
         st.info("Fed funds data unavailable for this session.")
 
