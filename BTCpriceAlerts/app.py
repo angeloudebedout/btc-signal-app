@@ -6,6 +6,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from data.fetch_btc import get_btc_price_data
@@ -106,6 +107,9 @@ st.caption("Institutional-grade overview powered by live market data and macro c
 
 # Sidebar configuration (filters, toggles)
 st.sidebar.header("Market Settings")
+if st.sidebar.button("🔄 Refresh data"):
+    st.experimental_rerun()
+
 date_range = st.sidebar.selectbox(
     "Historical depth",
     options=["90", "180", "365"],
@@ -124,12 +128,20 @@ show_ma = st.sidebar.checkbox("Moving Average Crossover", True)
 # Pull BTC price history (with offline fallback)
 days = int(date_range)
 price_df = get_btc_price_data(days=days, interval=interval)
+price_source = price_df.attrs.get("price_source", "unknown")
 
-if price_df.empty:
+if price_df.empty or "Close" not in price_df.columns:
     st.error("Unable to source BTC pricing data at the moment. Please retry later.")
     st.stop()
 
 btc = price_df.copy()
+
+if price_source != "yfinance":
+    st.warning(
+        "Live price feed unreachable. Displaying modelled series until the next refresh."
+    )
+else:
+    st.success("Streaming BTCUSD data via Yahoo Finance. Refresh for the latest close.")
 
 if show_rsi:
     btc = add_rsi(btc)
@@ -197,9 +209,91 @@ with chart_tab:
     st.markdown('<div class="block-header">Candlestick Structure</div>', unsafe_allow_html=True)
     st.plotly_chart(
         plot_candlestick(btc.tail(365 if interval == "1d" else 500)),
-        use_container_width=True,
+        width="stretch",
         theme="streamlit",
     )
+
+    st.markdown('<div class="block-header">Price Structure & Technical Overlays</div>', unsafe_allow_html=True)
+    overlay_fig = go.Figure()
+    overlay_fig.add_trace(
+        go.Scatter(
+            x=btc.index,
+            y=btc["Close"],
+            name="BTC Close",
+            line=dict(color="#5FD7FF", width=2.4),
+        )
+    )
+
+    if show_rsi and "RSI" in btc.columns:
+        overlay_fig.add_trace(
+            go.Scatter(
+                x=btc.index,
+                y=btc["RSI"],
+                name="RSI",
+                yaxis="y2",
+                line=dict(color="#9B7BFF", width=1.6, dash="dash"),
+            )
+        )
+
+    if show_macd and {"MACD_12_26_9", "MACDs_12_26_9"}.issubset(btc.columns):
+        overlay_fig.add_trace(
+            go.Scatter(
+                x=btc.index,
+                y=btc["MACD_12_26_9"],
+                name="MACD",
+                yaxis="y2",
+                line=dict(color="#4AF5C8", width=1.8),
+            )
+        )
+        overlay_fig.add_trace(
+            go.Scatter(
+                x=btc.index,
+                y=btc["MACDs_12_26_9"],
+                name="MACD Signal",
+                yaxis="y2",
+                line=dict(color="#FF9A76", width=1.5),
+            )
+        )
+
+    if show_ma and {"SMA_short", "SMA_long"}.issubset(btc.columns):
+        overlay_fig.add_trace(
+            go.Scatter(
+                x=btc.index,
+                y=btc["SMA_short"],
+                name="SMA Short",
+                line=dict(color="#F5B74A", width=1.5),
+            )
+        )
+        overlay_fig.add_trace(
+            go.Scatter(
+                x=btc.index,
+                y=btc["SMA_long"],
+                name="SMA Long",
+                line=dict(color="#FF6F91", width=1.5),
+            )
+        )
+
+    overlay_fig.update_layout(
+        template="plotly_dark",
+        margin=dict(l=0, r=0, t=10, b=0),
+        xaxis=dict(title="Date"),
+        yaxis=dict(title="BTC Price (USD)", side="left"),
+        yaxis2=dict(
+            title="Indicator",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+    )
+
+    st.plotly_chart(overlay_fig, width="stretch", theme="streamlit")
 
 with signals_tab:
     st.markdown('<div class="block-header">Multi-Indicator Guidance</div>', unsafe_allow_html=True)
@@ -212,11 +306,7 @@ with signals_tab:
     signal_cols = [col for col in btc.columns if "signal" in col.lower()]
     if signal_cols:
         latest_signals = btc[signal_cols].tail(25).fillna("Neutral")
-        st.dataframe(
-            latest_signals,
-            use_container_width=True,
-            height=400,
-        )
+        st.dataframe(latest_signals, height=400)
     else:
         st.info("No signals calculated. Toggle indicators in the sidebar to activate.")
 
@@ -226,15 +316,15 @@ with macro_tab:
     with macro_cols[0]:
         st.markdown("**US CPI (YoY)**")
         cpi = get_cpi()
-        st.line_chart(cpi, use_container_width=True)
+        st.line_chart(cpi, width="stretch")
     with macro_cols[1]:
         st.markdown("**US M2 Money Supply**")
         m2 = get_m2()
-        st.line_chart(m2, use_container_width=True)
+        st.line_chart(m2, width="stretch")
     with macro_cols[2]:
         st.markdown("**Fed Funds Effective Rate**")
         policy = get_policy_rate()
-        st.line_chart(policy, use_container_width=True)
+        st.line_chart(policy, width="stretch")
 
 st.caption(
     "Sourcing: BTC via Yahoo Finance (fallback synthetic series), Macro via FRED / fallback model."

@@ -16,7 +16,7 @@ def _fallback_series(series_id: str, start_date: str) -> pd.DataFrame:
     """Generate a synthetic monthly series when live FRED data is unavailable."""
     start = pd.to_datetime(start_date)
     periods = 60
-    dates = pd.date_range(start=start, periods=periods, freq="M")
+    dates = pd.date_range(start=start, periods=periods, freq="ME")
     trend = np.linspace(0, periods - 1, periods, dtype="float64")
     oscillation = 0.6 * np.sin(np.linspace(0, 4 * np.pi, periods))
     values = trend + oscillation

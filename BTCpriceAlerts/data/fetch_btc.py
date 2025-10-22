@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+
 import numpy as np
 import pandas as pd
 
@@ -6,6 +7,12 @@ try:
     import yfinance as yf
 except ImportError:  # yfinance is optional at runtime
     yf = None
+
+
+def _mark_source(df: pd.DataFrame, source: str) -> pd.DataFrame:
+    """Annotate the dataframe with the origin of the price data."""
+    df.attrs["price_source"] = source
+    return df
 
 
 def _fallback_series(periods: int, interval: str) -> pd.DataFrame:
@@ -36,7 +43,7 @@ def _fallback_series(periods: int, interval: str) -> pd.DataFrame:
         index=dates,
     )
     df.index.name = "Date"
-    return df
+    return _mark_source(df, "synthetic")
 
 
 def get_btc_price_data(
@@ -75,4 +82,5 @@ def get_btc_price_data(
 
     df.index = pd.to_datetime(df.index)
     df.index.name = "Date"
-    return df[["Open", "High", "Low", "Close", "Volume"]]
+    price_df = df[["Open", "High", "Low", "Close", "Volume"]]
+    return _mark_source(price_df, "yfinance")

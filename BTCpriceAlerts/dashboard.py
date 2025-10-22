@@ -322,13 +322,13 @@ fig.update_layout(
 )
 
 st.markdown('<div class="block-title">Price Structure & Technical Overlays</div>', unsafe_allow_html=True)
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 
 st.markdown('<div class="block-title">Signal Tape</div>', unsafe_allow_html=True)
 signal_cols = [col for col in df.columns if "signal" in col.lower()]
 if signal_cols:
     display = df[signal_cols].tail(40).fillna("Neutral")
-    st.dataframe(display, use_container_width=True, height=360)
+    st.dataframe(display, height=360)
 else:
     st.info("Signals are off. Activate indicators in the sidebar to populate this view.")
 
@@ -337,18 +337,18 @@ macro_cols = st.columns(2)
 with macro_cols[0]:
     st.subheader("CPI vs Price")
     if {"Close", "CPI"}.issubset(df.columns):
-        st.line_chart(df[["Close", "CPI"]], use_container_width=True)
+        st.line_chart(df[["Close", "CPI"]], width="stretch")
     elif "CPI" in df.columns:
-        st.line_chart(df[["CPI"]], use_container_width=True)
+        st.line_chart(df[["CPI"]], width="stretch")
     else:
         st.info("CPI data unavailable for this session.")
 
 with macro_cols[1]:
     st.subheader("Fed Funds Rate")
     if {"FedFundsRate"}.issubset(df.columns):
-        st.area_chart(df["FedFundsRate"], use_container_width=True)
+        st.area_chart(df["FedFundsRate"], width="stretch")
     elif "FedFundsRate" in df.columns:
-        st.area_chart(df[["FedFundsRate"]], use_container_width=True)
+        st.area_chart(df[["FedFundsRate"]], width="stretch")
     else:
         st.info("Fed funds data unavailable for this session.")
 
