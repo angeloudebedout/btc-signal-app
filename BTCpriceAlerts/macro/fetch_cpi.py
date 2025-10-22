@@ -3,10 +3,7 @@ from typing import Optional
 
 import pandas as pd
 
-try:
-    from pandas_datareader import data as pdr_data
-except ImportError:  # pandas-datareader is optional
-    pdr_data = None
+from data.fetch_fred import get_fred_macro_series
 
 
 def _fallback_series(column_name: str, periods: int = 24) -> pd.DataFrame:
@@ -26,16 +23,9 @@ def get_cpi(start: Optional[datetime] = None) -> pd.DataFrame:
     Provides a generated fallback series if FRED cannot be reached.
     """
     start = start or datetime(2015, 1, 1)
-
-    if pdr_data is None:
+    fred = get_fred_macro_series("CPIAUCSL", start.strftime("%Y-%m-%d"))
+    if fred.empty:
         return _fallback_series("US_CPI")
 
-    try:
-        cpi = pdr_data.DataReader("CPIAUCSL", "fred", start=start)
-        cpi = cpi.rename(columns={"CPIAUCSL": "US_CPI"})
-        cpi.index = pd.to_datetime(cpi.index)
-        cpi.index.name = "Date"
-        return cpi
-    except Exception as exc:  # pragma: no cover - best-effort logging
-        print(f"Error fetching CPI: {exc}")
-        return _fallback_series("US_CPI")
+    fred = fred.rename(columns={"CPIAUCSL": "US_CPI"})
+    return fred

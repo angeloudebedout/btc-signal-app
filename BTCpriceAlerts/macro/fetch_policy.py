@@ -3,10 +3,7 @@ from typing import Optional
 
 import pandas as pd
 
-try:
-    from pandas_datareader import data as pdr_data
-except ImportError:  # pandas-datareader is optional
-    pdr_data = None
+from data.fetch_fred import get_fred_macro_series
 
 
 def _fallback_series(column_name: str, periods: int = 24) -> pd.DataFrame:
@@ -26,16 +23,9 @@ def get_policy_rate(start: Optional[datetime] = None) -> pd.DataFrame:
     Provides a generated fallback series if FRED cannot be reached.
     """
     start = start or datetime(2015, 1, 1)
-
-    if pdr_data is None:
+    fred = get_fred_macro_series("FEDFUNDS", start.strftime("%Y-%m-%d"))
+    if fred.empty:
         return _fallback_series("US_Policy_Rate")
 
-    try:
-        rate = pdr_data.DataReader("FEDFUNDS", "fred", start=start)
-        rate = rate.rename(columns={"FEDFUNDS": "US_Policy_Rate"})
-        rate.index = pd.to_datetime(rate.index)
-        rate.index.name = "Date"
-        return rate
-    except Exception as exc:  # pragma: no cover - best-effort logging
-        print(f"Error fetching Policy Rate: {exc}")
-        return _fallback_series("US_Policy_Rate")
+    fred = fred.rename(columns={"FEDFUNDS": "US_Policy_Rate"})
+    return fred
